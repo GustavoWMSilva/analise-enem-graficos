@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Layer, Map as MapLibreMap, Marker, NavigationControl, Popup, Source } from '@vis.gl/react-maplibre';
+import type { MapRef } from '@vis.gl/react-maplibre';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import type { MapPoint, StateParticipation } from '../data/enemData';
 
 interface EnemMapProps {
   points: MapPoint[];
   states: StateParticipation[];
+  selectedRegion: string;
   selectedUf: string | null;
   onSelectUf: (uf: string) => void;
 }
@@ -37,6 +39,14 @@ const toneClasses: Record<MapPoint['tone'], string> = {
 
 const formatNumber = (value: number) => value.toLocaleString('pt-BR');
 
+const regionViewState: Record<string, { longitude: number; latitude: number; zoom: number }> = {
+  Norte: { longitude: -61.2, latitude: -3.8, zoom: 3.35 },
+  Nordeste: { longitude: -40.2, latitude: -8.5, zoom: 4.05 },
+  'Centro-oeste': { longitude: -54.5, latitude: -15.2, zoom: 3.85 },
+  Sudeste: { longitude: -44.7, latitude: -20.4, zoom: 4.65 },
+  Sul: { longitude: -51.6, latitude: -27.2, zoom: 4.7 },
+};
+
 function getFeatureProperties(event: MapPointerEvent): StateProperties | null {
   const properties = event.features?.[0]?.properties;
   if (!properties) return null;
@@ -51,7 +61,8 @@ function getFeatureProperties(event: MapPointerEvent): StateProperties | null {
   };
 }
 
-export function EnemMap({ points, states, selectedUf, onSelectUf }: EnemMapProps) {
+export function EnemMap({ points, states, selectedRegion, selectedUf, onSelectUf }: EnemMapProps) {
+  const mapRef = useRef<MapRef | null>(null);
   const [rawStates, setRawStates] = useState<FeatureCollection<Geometry> | null>(null);
   const [hoveredState, setHoveredState] = useState<StateProperties | null>(null);
   const [activePoint, setActivePoint] = useState<MapPoint | null>(null);
@@ -118,9 +129,18 @@ export function EnemMap({ points, states, selectedUf, onSelectUf }: EnemMapProps
 
   const selectedPoint = selectedUf ? pointByUf.get(selectedUf) : undefined;
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const nextView = regionViewState[selectedRegion] ?? { longitude: -53.2, latitude: -14.6, zoom: 3.35 };
+    map.flyTo({ center: [nextView.longitude, nextView.latitude], zoom: nextView.zoom, duration: 700 });
+  }, [selectedRegion]);
+
   return (
     <div className="relative isolate min-h-[520px] w-full min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
       <MapLibreMap
+        ref={mapRef}
         initialViewState={{ longitude: -53.2, latitude: -14.6, zoom: 3.35 }}
         mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
         style={{ width: '100%', height: '100%' }}
@@ -164,7 +184,16 @@ export function EnemMap({ points, states, selectedUf, onSelectUf }: EnemMapProps
                   maxRecords,
                   '#0f3f46',
                 ],
-                'fill-opacity': ['case', ['==', ['get', 'uf'], selectedUf], 0.92, 0.68],
+                'fill-opacity': [
+                  'case',
+                  ['==', ['get', 'uf'], selectedUf],
+                  0.92,
+                  ['all', ['!=', selectedRegion, 'Todas'], ['!=', ['get', 'regiao'], selectedRegion]],
+                  0.16,
+                  ['!=', selectedRegion, 'Todas'],
+                  0.76,
+                  0.68,
+                ],
               }}
             />
             <Layer
@@ -173,7 +202,12 @@ export function EnemMap({ points, states, selectedUf, onSelectUf }: EnemMapProps
               paint={{
                 'line-color': ['case', ['==', ['get', 'uf'], selectedUf], '#be123c', '#ffffff'],
                 'line-width': ['case', ['==', ['get', 'uf'], selectedUf], 2.4, 0.9],
-                'line-opacity': 0.95,
+                'line-opacity': [
+                  'case',
+                  ['all', ['!=', selectedRegion, 'Todas'], ['!=', ['get', 'regiao'], selectedRegion]],
+                  0.35,
+                  0.95,
+                ],
               }}
             />
           </Source>
@@ -248,7 +282,11 @@ export function EnemMap({ points, states, selectedUf, onSelectUf }: EnemMapProps
             {((selectedState.registros / totalRecords) * 100).toFixed(1)}% da base.
           </p>
         ) : (
-          <p className="mt-1 text-slate-600">Nenhuma UF destacada no mapa.</p>
+          <p className="mt-1 text-slate-600">
+            {selectedRegion === 'Todas'
+              ? 'Nenhuma UF destacada no mapa.'
+              : `Região em foco: ${selectedRegion === 'Centro-oeste' ? 'Centro-Oeste' : selectedRegion}.`}
+          </p>
         )}
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
           <div
