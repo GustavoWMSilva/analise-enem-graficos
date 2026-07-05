@@ -250,7 +250,7 @@ export function EnemMap({ points, states, selectedRegion, selectedUf, onSelectUf
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">UF selecionada</p>
               <h3 className="mt-1 text-sm font-bold text-slate-950">{selectedState.nome}</h3>
               <p className="mt-1 text-xs leading-5 text-slate-600">
-                {formatNumber(selectedState.registros)} participantes na amostra do painel.
+                {formatNumber(selectedState.registros)} registros escola-ano na amostra do painel.
               </p>
             </div>
           </Popup>
@@ -275,7 +275,7 @@ export function EnemMap({ points, states, selectedRegion, selectedUf, onSelectUf
       </MapLibreMap>
 
       <div className="pointer-events-none absolute bottom-3 left-3 w-[min(280px,calc(100%-1.5rem))] rounded-lg border border-white/80 bg-white/95 px-3 py-2 text-xs shadow-lg backdrop-blur">
-        <p className="font-bold text-slate-900">Participantes por UF</p>
+        <p className="font-bold text-slate-900">Registros por UF</p>
         {selectedState ? (
           <p className="mt-1 text-slate-600">
             {selectedState.uf}: {formatNumber(selectedState.registros)} registros,{' '}

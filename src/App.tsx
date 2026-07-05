@@ -33,7 +33,9 @@ import {
   networkScores,
   regionalFederalPrivateUrbanScores,
   regionalNetworkScores,
+  regionNetworkScoreAverages,
   regionScoreAverages,
+  stateNetworkScoreAverages,
   stateScoreAverages,
   stateParticipation,
   subjectLabels,
@@ -361,7 +363,9 @@ function renderApprovalTooltip({
       <p className="text-slate-600">Média geral: {formatScore(row.mediaGeral)}</p>
       <p className="text-slate-600">Taxa de aprovação: {formatPercent(row.taxaAprovacao)}</p>
       <p className="text-slate-600">Taxa de permanência: {formatPercent(row.taxaPermanencia)}</p>
-      <p className="text-slate-500">{formatNumber(row.escolas)} registros escola-ano</p>
+      <p className="text-slate-500">
+        {formatNumber(row.registros)} registros escola-ano, {formatNumber(row.taxaPermanenciaRegistros)} com permanência
+      </p>
     </div>
   );
 }
@@ -543,10 +547,8 @@ export default function App() {
   };
 
   const toggleUf = (uf: string) => {
-    const nextState = stateParticipation.find((state) => state.uf === uf);
     const shouldClear = selectedUf === uf;
     setSelectedUf(shouldClear ? null : uf);
-    if (!shouldClear && nextState) setSelectedRegion(nextState.regiao as RegionName);
   };
 
   const getSubjectOpacity = (subject: SubjectKey) => (!selectedSubject || selectedSubject === subject ? 1 : 0.36);
@@ -584,11 +586,22 @@ export default function App() {
     [selectedNetwork, selectedRegion]
   );
   const visibleStateScoreAverages = useMemo(
+    () => {
+      const source =
+        selectedNetwork === 'Todas'
+          ? stateScoreAverages
+          : stateNetworkScoreAverages.filter((state) => state.rede === selectedNetwork);
+
+      return selectedRegion === 'Todas' ? source : source.filter((state) => state.regiao === selectedRegion);
+    },
+    [selectedNetwork, selectedRegion]
+  );
+  const visibleRegionScoreAverages = useMemo(
     () =>
-      selectedRegion === 'Todas'
-        ? stateScoreAverages
-        : stateScoreAverages.filter((state) => state.regiao === selectedRegion),
-    [selectedRegion]
+      selectedNetwork === 'Todas'
+        ? regionScoreAverages
+        : regionNetworkScoreAverages.filter((region) => region.rede === selectedNetwork),
+    [selectedNetwork]
   );
   const visibleFederalPrivateUrbanScores = useMemo(
     () =>
@@ -606,7 +619,10 @@ export default function App() {
         : urbanRuralRegionScores.filter((row) => row.regiao === selectedRegion),
     [selectedRegion]
   );
-  const selectedScoreState = selectedUf ? stateScoreAverages.find((state) => state.uf === selectedUf) ?? null : null;
+  const selectedScoreState = selectedUf ? visibleStateScoreAverages.find((state) => state.uf === selectedUf) ?? null : null;
+  const showFederalUrbanScores = selectedNetwork !== 'Privada';
+  const showPrivateUrbanScores = selectedNetwork !== 'Publica';
+  const showUrbanRuralScores = selectedNetwork !== 'Privada';
   const selectClassName =
     'mt-2 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 shadow-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200';
 
@@ -654,8 +670,8 @@ export default function App() {
                 value={territoryLabel}
                 helper={
                   selectedState
-                    ? `${formatNumber(selectedState.registros)} participantes, ${selectedStateShare.toFixed(1)}% da base.`
-                    : `${formatNumber(filteredTotalRecords)} participantes na base filtrada.`
+                    ? `${formatNumber(selectedState.registros)} registros escola-ano, ${selectedStateShare.toFixed(1)}% da base.`
+                    : `${formatNumber(filteredTotalRecords)} registros escola-ano na base filtrada.`
                 }
                 icon={<MapPinned className="h-5 w-5" />}
               />
@@ -678,7 +694,7 @@ export default function App() {
             </section>
 
             <section className="grid min-h-[560px] gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]">
-              <ChartPanel eyebrow="Território" title="Participantes do ENEM por estado">
+              <ChartPanel eyebrow="Território" title="Registros escola-ano por estado">
                 <EnemMap
                   points={mapPoints}
                   states={networkFilteredStateParticipation}
@@ -689,7 +705,7 @@ export default function App() {
               </ChartPanel>
 
               <div className="grid gap-4">
-                <ChartPanel eyebrow="Demografia" title="Estados com mais participantes">
+                <ChartPanel eyebrow="Demografia" title="Estados com mais registros">
                   <div className="space-y-3">
                     {topStateData.map((state) => (
                       <button
@@ -776,7 +792,7 @@ export default function App() {
                       <YAxis
                         type="number"
                         dataKey="mediaGeral"
-                        name="Média geral"
+                        name={selectedNetwork === 'Todas' ? 'Média geral' : `Média ${formatNetwork(selectedNetwork)}`}
                         domain={[440, 610]}
                         tick={{ fill: '#64748b', fontSize: 12 }}
                       />
@@ -852,7 +868,7 @@ export default function App() {
                         {visibleStateScoreAverages.map((item) => (
                           <Cell
                             key={item.uf}
-                            fill={getRegionColor(item.regiao)}
+                            fill={selectedNetwork === 'Todas' ? getRegionColor(item.regiao) : networkColors[selectedNetwork]}
                             fillOpacity={selectedUf && selectedUf !== item.uf ? 0.36 : 0.88}
                             stroke={item.uf === selectedUf ? '#0f172a' : 'transparent'}
                             strokeWidth={item.uf === selectedUf ? 1.5 : 0}
@@ -863,7 +879,7 @@ export default function App() {
                   </ResponsiveContainer>
                 </div>
                 <div className="mt-2 grid gap-2 sm:grid-cols-5">
-                  {regionScoreAverages.map((item) => (
+                  {visibleRegionScoreAverages.map((item) => (
                     <button
                       key={item.regiao}
                       type="button"
@@ -882,7 +898,8 @@ export default function App() {
                 </div>
                 {selectedScoreState && (
                   <p className="mt-2 text-xs font-semibold text-slate-500">
-                    UF em foco: {selectedScoreState.uf}, média {formatScore(selectedScoreState.mediaGeral)}.
+                    UF em foco: {selectedScoreState.uf}, média {formatScore(selectedScoreState.mediaGeral)}
+                    {selectedNetwork === 'Todas' ? '' : ` na rede ${formatNetwork(selectedNetwork).toLowerCase()}`}.
                   </p>
                 )}
               </ChartPanel>
@@ -902,54 +919,64 @@ export default function App() {
                       <YAxis domain={['dataMin - 18', 'dataMax + 12']} tick={{ fill: '#64748b', fontSize: 12 }} />
                       <Tooltip formatter={(value) => `${Number(value).toFixed(1)} pts`} />
                       <Legend />
-                      <Bar dataKey="federalUrbana" name="Federal urbana" fill="#0891b2" radius={[5, 5, 0, 0]} />
-                      <Bar dataKey="privadaUrbana" name="Privada urbana" fill="#6366f1" radius={[5, 5, 0, 0]} />
+                      {showFederalUrbanScores && (
+                        <Bar dataKey="federalUrbana" name="Federal urbana" fill="#0891b2" radius={[5, 5, 0, 0]} />
+                      )}
+                      {showPrivateUrbanScores && (
+                        <Bar dataKey="privadaUrbana" name="Privada urbana" fill="#6366f1" radius={[5, 5, 0, 0]} />
+                      )}
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </ChartPanel>
 
               <ChartPanel eyebrow="Localização" title={`Escolas estaduais: urbano x rural em ${territoryLabel}`}>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={visibleUrbanRuralRegionScores} margin={{ top: 8, right: 16, left: -8, bottom: 28 }}>
-                      <CartesianGrid vertical={false} stroke="#e2e8f0" />
-                      <XAxis
-                        dataKey="regiao"
-                        angle={-18}
-                        textAnchor="end"
-                        height={44}
-                        tick={{ fill: '#475569', fontSize: 11 }}
-                        tickFormatter={(value) => formatRegion(String(value))}
-                      />
-                      <YAxis domain={['dataMin - 14', 'dataMax + 10']} tick={{ fill: '#64748b', fontSize: 12 }} />
-                      <Tooltip formatter={(value) => `${Number(value).toFixed(1)} pts`} />
-                      <Legend />
-                      <Bar
-                        dataKey="urbana"
-                        name="Urbana"
-                        fill="#0f766e"
-                        radius={[5, 5, 0, 0]}
-                        cursor="pointer"
-                        onClick={(entry) => {
-                          const payload = getPayload<{ regiao?: string }>(entry);
-                          if (payload?.regiao) selectRegion(payload.regiao as RegionName);
-                        }}
-                      />
-                      <Bar
-                        dataKey="rural"
-                        name="Rural"
-                        fill="#f59e0b"
-                        radius={[5, 5, 0, 0]}
-                        cursor="pointer"
-                        onClick={(entry) => {
-                          const payload = getPayload<{ regiao?: string }>(entry);
-                          if (payload?.regiao) selectRegion(payload.regiao as RegionName);
-                        }}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                {showUrbanRuralScores ? (
+                  <div className="h-80">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={visibleUrbanRuralRegionScores} margin={{ top: 8, right: 16, left: -8, bottom: 28 }}>
+                        <CartesianGrid vertical={false} stroke="#e2e8f0" />
+                        <XAxis
+                          dataKey="regiao"
+                          angle={-18}
+                          textAnchor="end"
+                          height={44}
+                          tick={{ fill: '#475569', fontSize: 11 }}
+                          tickFormatter={(value) => formatRegion(String(value))}
+                        />
+                        <YAxis domain={['dataMin - 14', 'dataMax + 10']} tick={{ fill: '#64748b', fontSize: 12 }} />
+                        <Tooltip formatter={(value) => `${Number(value).toFixed(1)} pts`} />
+                        <Legend />
+                        <Bar
+                          dataKey="urbana"
+                          name="Urbana"
+                          fill="#0f766e"
+                          radius={[5, 5, 0, 0]}
+                          cursor="pointer"
+                          onClick={(entry) => {
+                            const payload = getPayload<{ regiao?: string }>(entry);
+                            if (payload?.regiao) selectRegion(payload.regiao as RegionName);
+                          }}
+                        />
+                        <Bar
+                          dataKey="rural"
+                          name="Rural"
+                          fill="#f59e0b"
+                          radius={[5, 5, 0, 0]}
+                          cursor="pointer"
+                          onClick={(entry) => {
+                            const payload = getPayload<{ regiao?: string }>(entry);
+                            if (payload?.regiao) selectRegion(payload.regiao as RegionName);
+                          }}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="flex h-80 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-6 text-center text-sm font-semibold text-slate-500">
+                    Este recorte usa somente escolas estaduais, portanto nao ha serie privada para o filtro atual.
+                  </div>
+                )}
               </ChartPanel>
             </section>
 

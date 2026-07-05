@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "generate:data": "python scripts/generate_enem_data.py",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
