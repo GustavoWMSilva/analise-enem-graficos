@@ -130,6 +130,7 @@ def load_data() -> pd.DataFrame:
         "SG_UF_ESCOLA",
         "TP_DEPENDENCIA_ADM_ESCOLA",
         "TP_LOCALIZACAO_ESCOLA",
+        "NU_PARTICIPANTES",
         "NU_MEDIA_CN",
         "NU_MEDIA_CH",
         "NU_MEDIA_LP",
@@ -182,11 +183,53 @@ def build_year_scores(df: pd.DataFrame) -> list[dict[str, object]]:
 
 def build_network_counts(df: pd.DataFrame) -> list[dict[str, object]]:
     counts = df["rede"].value_counts()
+    participants = df.groupby("rede")["NU_PARTICIPANTES"].sum()
     total = int(counts.sum())
     return [
-        {"rede": "Publica", "registros": int(counts.get("Publica", 0)), "percentual": round(counts.get("Publica", 0) / total * 100, 2)},
-        {"rede": "Privada", "registros": int(counts.get("Privada", 0)), "percentual": round(counts.get("Privada", 0) / total * 100, 2)},
+        {
+            "rede": "Publica",
+            "registros": int(counts.get("Publica", 0)),
+            "participantes": int(participants.get("Publica", 0)),
+            "percentual": round(counts.get("Publica", 0) / total * 100, 2),
+        },
+        {
+            "rede": "Privada",
+            "registros": int(counts.get("Privada", 0)),
+            "participantes": int(participants.get("Privada", 0)),
+            "percentual": round(counts.get("Privada", 0) / total * 100, 2),
+        },
     ]
+
+
+def iter_scope_frames(df: pd.DataFrame):
+    yield "Brasil", "Brasil", "Brasil", df
+    for region in REGION_ORDER:
+        yield "Regiao", region, region, df[df["regiao"] == region]
+    for uf in sorted(df["SG_UF_ESCOLA"].dropna().unique()):
+        subset = df[df["SG_UF_ESCOLA"] == uf]
+        yield "UF", uf, subset["regiao"].iloc[0], subset
+
+
+def build_scope_network_counts(df: pd.DataFrame) -> list[dict[str, object]]:
+    rows = []
+    for scope_type, scope, region, subset in iter_scope_frames(df):
+        counts = subset["rede"].value_counts()
+        participants = subset.groupby("rede")["NU_PARTICIPANTES"].sum()
+        total = int(counts.sum()) or 1
+        for network in ["Publica", "Privada"]:
+            count = int(counts.get(network, 0))
+            rows.append(
+                {
+                    "scopeType": scope_type,
+                    "scope": scope,
+                    "regiao": region,
+                    "rede": network,
+                    "registros": count,
+                    "participantes": int(participants.get(network, 0)),
+                    "percentual": round(count / total * 100, 2),
+                }
+            )
+    return rows
 
 
 def build_admin_counts(df: pd.DataFrame) -> list[dict[str, object]]:
@@ -201,6 +244,30 @@ def build_admin_counts(df: pd.DataFrame) -> list[dict[str, object]]:
         {"dependencia": label, "rede": rede, "registros": int(counts.get(label, 0))}
         for label, rede in order
     ]
+
+
+def build_scope_admin_counts(df: pd.DataFrame) -> list[dict[str, object]]:
+    order = [
+        ("Estadual", "Publica"),
+        ("Privada", "Privada"),
+        ("Municipal", "Publica"),
+        ("Federal", "Publica"),
+    ]
+    rows = []
+    for scope_type, scope, region, subset in iter_scope_frames(df):
+        counts = subset["TP_DEPENDENCIA_ADM_ESCOLA"].map(DEPENDENCY_LABELS).value_counts()
+        for label, network in order:
+            rows.append(
+                {
+                    "scopeType": scope_type,
+                    "scope": scope,
+                    "regiao": region,
+                    "dependencia": label,
+                    "rede": network,
+                    "registros": int(counts.get(label, 0)),
+                }
+            )
+    return rows
 
 
 def build_state_participation(df: pd.DataFrame) -> list[dict[str, object]]:
@@ -219,11 +286,81 @@ def build_state_participation(df: pd.DataFrame) -> list[dict[str, object]]:
     ]
 
 
+def year_score_row(row: pd.Series) -> dict[str, object]:
+    return {
+        "ano": int(row["NU_ANO"]),
+        "cn": row["NU_MEDIA_CN"],
+        "ch": row["NU_MEDIA_CH"],
+        "lp": row["NU_MEDIA_LP"],
+        "mt": row["NU_MEDIA_MT"],
+        "redacao": row["NU_MEDIA_RED"],
+    }
+
+
+def build_scope_year_scores(df: pd.DataFrame) -> list[dict[str, object]]:
+    rows = []
+    for scope_type, scope, region, subset in iter_scope_frames(df):
+        for network in ["Todas", "Publica", "Privada"]:
+            network_subset = subset if network == "Todas" else subset[subset["rede"] == network]
+            grouped = (
+                network_subset.groupby("NU_ANO")
+                .agg(
+                    NU_MEDIA_CN=("NU_MEDIA_CN", "mean"),
+                    NU_MEDIA_CH=("NU_MEDIA_CH", "mean"),
+                    NU_MEDIA_LP=("NU_MEDIA_LP", "mean"),
+                    NU_MEDIA_MT=("NU_MEDIA_MT", "mean"),
+                    NU_MEDIA_RED=("NU_MEDIA_RED", "mean"),
+                    registros=("NU_ANO", "size"),
+                    participantes=("NU_PARTICIPANTES", "sum"),
+                )
+                .reset_index()
+                .sort_values("NU_ANO")
+            )
+            grouped = round_df(grouped, SUBJECT_COLUMNS)
+            for _, row in grouped.iterrows():
+                rows.append(
+                    {
+                        "scopeType": scope_type,
+                        "scope": scope,
+                        "regiao": region,
+                        "rede": network,
+                        **year_score_row(row),
+                        "registros": int(row["registros"]),
+                        "participantes": int(row["participantes"]),
+                    }
+                )
+    return rows
+
+
 def build_network_scores(df: pd.DataFrame) -> list[dict[str, object]]:
     rows = []
     for _, full_label, _, column in SUBJECTS:
         grouped = df.groupby("rede")[column].mean()
         rows.append({"area": full_label, "publica": grouped.get("Publica", 0), "privada": grouped.get("Privada", 0)})
+    return rows
+
+
+def build_scope_network_scores(df: pd.DataFrame) -> list[dict[str, object]]:
+    rows = []
+    for scope_type, scope, region, subset in iter_scope_frames(df):
+        period_frames = [(0, subset)] + [(year, subset[subset["NU_ANO"] == year]) for year in range(YEAR_START, YEAR_END + 1)]
+        for year, period_subset in period_frames:
+            for _, full_label, _, column in SUBJECTS:
+                grouped = period_subset.groupby("rede")[column].mean()
+                counts = period_subset.groupby("rede")[column].count()
+                rows.append(
+                    {
+                        "scopeType": scope_type,
+                        "scope": scope,
+                        "regiao": region,
+                        "ano": year,
+                        "area": full_label,
+                        "publica": grouped.get("Publica", 0),
+                        "privada": grouped.get("Privada", 0),
+                        "registrosPublicos": int(counts.get("Publica", 0)),
+                        "registrosPrivados": int(counts.get("Privada", 0)),
+                    }
+                )
     return rows
 
 
@@ -415,12 +552,18 @@ def build_ts() -> str:
         f"// Recorte de desempenho: {YEAR_START}-{YEAR_END}. Nao edite os agregados manualmente.",
         "",
         "export type SubjectKey = 'cn' | 'ch' | 'lp' | 'mt' | 'redacao';",
+        "export type ScopeType = 'Brasil' | 'Regiao' | 'UF';",
+        "export type NetworkScope = 'Todas' | 'Publica' | 'Privada';",
         "",
         "export interface YearScore { ano: number; cn: number; ch: number; lp: number; mt: number; redacao: number; }",
-        "export interface NetworkCount { rede: 'Publica' | 'Privada'; registros: number; percentual: number; }",
+        "export interface NetworkCount { rede: 'Publica' | 'Privada'; registros: number; participantes: number; percentual: number; }",
         "export interface NetworkScore { area: string; publica: number; privada: number; }",
         "export interface RegionalNetworkScore extends NetworkScore { regiao: string; }",
         "export interface AdminCount { dependencia: string; rede: 'Publica' | 'Privada'; registros: number; }",
+        "export interface ScopeNetworkCount extends NetworkCount { scopeType: ScopeType; scope: string; regiao: string; }",
+        "export interface ScopeAdminCount extends AdminCount { scopeType: ScopeType; scope: string; regiao: string; }",
+        "export interface ScopeYearScore extends YearScore { scopeType: ScopeType; scope: string; regiao: string; rede: NetworkScope; registros: number; participantes: number; }",
+        "export interface ScopeNetworkScore extends NetworkScore { scopeType: ScopeType; scope: string; regiao: string; ano: number; registrosPublicos: number; registrosPrivados: number; }",
         "export interface StateParticipation { uf: string; nome: string; regiao: string; registros: number; }",
         "export interface ApprovalScorePoint { uf: string; regiao: string; rede: 'Publica' | 'Privada'; mediaGeral: number; taxaAprovacao: number; taxaPermanencia: number; taxaPermanenciaRegistros: number; registros: number; }",
         "export interface StateScoreAverage { uf: string; regiao: string; mediaGeral: number; registros: number; }",
@@ -438,9 +581,17 @@ def build_ts() -> str:
         "",
         ts_array("adminCounts", "AdminCount", build_admin_counts(df)),
         "",
+        ts_array("scopeNetworkCounts", "ScopeNetworkCount", build_scope_network_counts(df)),
+        "",
+        ts_array("scopeAdminCounts", "ScopeAdminCount", build_scope_admin_counts(df)),
+        "",
         ts_array("stateParticipation", "StateParticipation", build_state_participation(df)),
         "",
+        ts_array("scopeYearScores", "ScopeYearScore", build_scope_year_scores(df)),
+        "",
         ts_array("networkScores", "NetworkScore", build_network_scores(df)),
+        "",
+        ts_array("scopeNetworkScores", "ScopeNetworkScore", build_scope_network_scores(df)),
         "",
         ts_array("regionalNetworkScores", "RegionalNetworkScore", build_regional_network_scores(df)),
         "",

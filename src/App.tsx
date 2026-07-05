@@ -23,29 +23,32 @@ import { ChartPanel } from './components/ChartPanel';
 import { EnemMap } from './components/EnemMap';
 import { MetricCard } from './components/MetricCard';
 import {
-  adminCounts,
   approvalScoreScatter,
   correlationMatrix,
   correlationRows,
   federalPrivateUrbanScores,
   mapPoints,
-  networkCounts,
   networkScores,
   regionalFederalPrivateUrbanScores,
-  regionalNetworkScores,
   regionNetworkScoreAverages,
   regionScoreAverages,
+  scopeAdminCounts,
+  scopeNetworkCounts,
+  scopeNetworkScores,
+  scopeYearScores,
   stateNetworkScoreAverages,
   stateScoreAverages,
   stateParticipation,
   subjectLabels,
-  totalRecords,
   urbanRuralRegionScores,
   yearScores,
   type ApprovalScorePoint,
   type AdminCount,
   type NetworkCount,
   type NetworkScore,
+  type ScopeNetworkScore,
+  type ScopeType,
+  type ScopeYearScore,
   type StateParticipation,
   type SubjectKey,
   type YearScore,
@@ -101,32 +104,9 @@ const formatPercent = (value: number) => `${value.toFixed(1)}%`;
 const formatNetwork = (network: NetworkFilter) => networkLabels[network];
 const formatRegion = (region: string) => (region === 'Centro-oeste' ? 'Centro-Oeste' : region);
 
-const regionPublicShare: Record<string, number> = {
-  Norte: 0.78,
-  Nordeste: 0.75,
-  'Centro-oeste': 0.66,
-  Sudeste: 0.62,
-  Sul: 0.64,
-};
-
-const regionScoreOffset: Record<string, number> = {
-  Norte: -12,
-  Nordeste: -8,
-  'Centro-oeste': 4,
-  Sudeste: 12,
-  Sul: 9,
-};
-
-const subjectScoreWeight: Record<SubjectKey, number> = {
-  cn: 0.85,
-  ch: 0.8,
-  lp: 0.75,
-  mt: 1.15,
-  redacao: 1.45,
-};
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
+interface ScopeSelection {
+  scopeType: ScopeType;
+  scope: string;
 }
 
 function roundScore(value: number) {
@@ -150,140 +130,97 @@ function getAverageYearScore(rows: YearScore[]): YearScore {
   };
 }
 
-function getPeriodScoreOffset(yearFilter: YearFilter) {
-  if (yearFilter === 'Todos') return 0;
-  const selectedRow = yearScores.find((row) => row.ano === yearFilter);
-  if (!selectedRow) return 0;
-
-  const allYearsAverage = yearScores.reduce((sum, row) => sum + getAverageScore(row), 0) / yearScores.length;
-  return getAverageScore(selectedRow) - allYearsAverage;
+function getScopeSelection(selectedRegion: RegionFilter, selectedState: StateParticipation | null): ScopeSelection {
+  if (selectedState) return { scopeType: 'UF', scope: selectedState.uf };
+  if (selectedRegion !== 'Todas') return { scopeType: 'Regiao', scope: selectedRegion };
+  return { scopeType: 'Brasil', scope: 'Brasil' };
 }
 
-function getNetworkCorrelationOffset(selectedNetwork: NetworkFilter) {
-  if (selectedNetwork === 'Publica') return -10;
-  if (selectedNetwork === 'Privada') return 10;
-  return 0;
-}
-
-function getStateScoreOffset(state: StateParticipation, maxRecords: number) {
-  const regionalOffset = regionScoreOffset[state.regiao] ?? 0;
-  const participationOffset = ((state.registros / maxRecords) - 0.25) * 8;
-  return regionalOffset + participationOffset;
-}
-
-function getStateNetworkCounts(state: StateParticipation): NetworkCount[] {
-  const publicShare = regionPublicShare[state.regiao] ?? networkCounts[0].percentual / 100;
-  const publicRecords = Math.round(state.registros * publicShare);
-  const privateRecords = state.registros - publicRecords;
-
-  return [
-    { rede: 'Publica', registros: publicRecords, percentual: (publicRecords / state.registros) * 100 },
-    { rede: 'Privada', registros: privateRecords, percentual: (privateRecords / state.registros) * 100 },
-  ];
+function isScopeMatch(row: { scopeType: ScopeType; scope: string }, selection: ScopeSelection) {
+  return row.scopeType === selection.scopeType && row.scope === selection.scope;
 }
 
 function getStateRecordsForNetwork(state: StateParticipation, selectedNetwork: NetworkFilter) {
   if (selectedNetwork === 'Todas') return state.registros;
-  return getStateNetworkCounts(state).find((item) => item.rede === selectedNetwork)?.registros ?? 0;
-}
-
-function getAggregateNetworkCounts(states: StateParticipation[]): NetworkCount[] {
-  const totals = states.reduce(
-    (acc, state) => {
-      getStateNetworkCounts(state).forEach((item) => {
-        acc[item.rede] += item.registros;
-      });
-      return acc;
-    },
-    { Publica: 0, Privada: 0 }
+  return (
+    scopeNetworkCounts.find((item) => item.scopeType === 'UF' && item.scope === state.uf && item.rede === selectedNetwork)
+      ?.registros ?? 0
   );
-  const total = totals.Publica + totals.Privada || 1;
-
-  return [
-    { rede: 'Publica', registros: totals.Publica, percentual: (totals.Publica / total) * 100 },
-    { rede: 'Privada', registros: totals.Privada, percentual: (totals.Privada / total) * 100 },
-  ];
 }
 
-function getStateAdminCounts(stateNetworkCounts: NetworkCount[]): AdminCount[] {
-  const publicRecords = stateNetworkCounts.find((item) => item.rede === 'Publica')?.registros ?? 0;
-  const privateRecords = stateNetworkCounts.find((item) => item.rede === 'Privada')?.registros ?? 0;
-  const estadual = Math.round(publicRecords * (adminCounts[0].registros / networkCounts[0].registros));
-  const municipal = Math.round(publicRecords * (adminCounts[2].registros / networkCounts[0].registros));
-  const federal = Math.max(0, publicRecords - estadual - municipal);
-
-  return [
-    { dependencia: 'Estadual', rede: 'Publica', registros: estadual },
-    { dependencia: 'Privada', rede: 'Privada', registros: privateRecords },
-    { dependencia: 'Municipal', rede: 'Publica', registros: municipal },
-    { dependencia: 'Federal', rede: 'Publica', registros: federal },
-  ];
+function getNetworkCountsForScope(selection: ScopeSelection): NetworkCount[] {
+  return scopeNetworkCounts
+    .filter((item) => isScopeMatch(item, selection))
+    .map(({ rede, registros, participantes, percentual }) => ({ rede, registros, participantes, percentual }));
 }
 
-function getAggregateAdminCounts(states: StateParticipation[]): AdminCount[] {
-  const totals = new Map<string, AdminCount>();
-
-  states.forEach((state) => {
-    getStateAdminCounts(getStateNetworkCounts(state)).forEach((item) => {
-      const current = totals.get(item.dependencia);
-      totals.set(item.dependencia, {
-        ...item,
-        registros: (current?.registros ?? 0) + item.registros,
-      });
-    });
-  });
-
-  return adminCounts.map((item) => totals.get(item.dependencia) ?? { ...item, registros: 0 });
+function getAdminCountsForScope(selection: ScopeSelection): AdminCount[] {
+  return scopeAdminCounts
+    .filter((item) => isScopeMatch(item, selection))
+    .map(({ dependencia, rede, registros }) => ({ dependencia, rede, registros }));
 }
 
-function getNetworkSubjectOffset(subject: SubjectKey, selectedNetwork: NetworkFilter) {
-  if (selectedNetwork === 'Todas') return 0;
-  const row = networkScores.find((item) => getSubjectFromArea(item.area) === subject);
-  if (!row) return 0;
-
-  const publicShare = networkCounts[0].registros / totalRecords;
-  const weightedAverage = row.publica * publicShare + row.privada * (1 - publicShare);
-  return selectedNetwork === 'Publica' ? row.publica - weightedAverage : row.privada - weightedAverage;
+function getYearScoresForScope(selection: ScopeSelection, selectedNetwork: NetworkFilter): YearScore[] {
+  const rows = scopeYearScores.filter(
+    (item) => isScopeMatch(item, selection) && item.rede === selectedNetwork
+  );
+  return rows.length > 0 ? rows.map(toYearScore) : yearScores;
 }
 
-function getStateYearScores(scoreOffset: number, selectedNetwork: NetworkFilter): YearScore[] {
-  return yearScores.map((row, index) => {
-    const yearDrift = (index - (yearScores.length - 1) / 2) * 0.35;
+function toYearScore(row: ScopeYearScore): YearScore {
+  return {
+    ano: row.ano,
+    cn: row.cn,
+    ch: row.ch,
+    lp: row.lp,
+    mt: row.mt,
+    redacao: row.redacao,
+  };
+}
+
+function getNetworkScoresForScope(selection: ScopeSelection, yearFilter: YearFilter): NetworkScore[] {
+  const selectedYear = yearFilter === 'Todos' ? 0 : yearFilter;
+  const rows = scopeNetworkScores.filter((item) => isScopeMatch(item, selection) && item.ano === selectedYear);
+  return rows.length > 0 ? rows.map(toNetworkScore) : networkScores;
+}
+
+function getConsideredTotals(
+  selection: ScopeSelection,
+  selectedNetwork: NetworkFilter,
+  yearFilter: YearFilter,
+  networkCountsForScope: NetworkCount[]
+) {
+  if (yearFilter === 'Todos') {
+    const source =
+      selectedNetwork === 'Todas'
+        ? networkCountsForScope
+        : networkCountsForScope.filter((item) => item.rede === selectedNetwork);
 
     return {
-      ano: row.ano,
-      cn: roundScore(row.cn + scoreOffset * subjectScoreWeight.cn + getNetworkSubjectOffset('cn', selectedNetwork) + yearDrift),
-      ch: roundScore(row.ch + scoreOffset * subjectScoreWeight.ch + getNetworkSubjectOffset('ch', selectedNetwork) + yearDrift),
-      lp: roundScore(row.lp + scoreOffset * subjectScoreWeight.lp + getNetworkSubjectOffset('lp', selectedNetwork) + yearDrift),
-      mt: roundScore(row.mt + scoreOffset * subjectScoreWeight.mt + getNetworkSubjectOffset('mt', selectedNetwork) + yearDrift),
-      redacao: roundScore(
-        row.redacao +
-          scoreOffset * subjectScoreWeight.redacao +
-          getNetworkSubjectOffset('redacao', selectedNetwork) +
-          yearDrift * 1.4
-      ),
+      registros: source.reduce((sum, item) => sum + item.registros, 0),
+      participantes: source.reduce((sum, item) => sum + item.participantes, 0),
     };
-  });
+  }
+
+  const yearRow = scopeYearScores.find(
+    (item) =>
+      isScopeMatch(item, selection) &&
+      item.rede === selectedNetwork &&
+      item.ano === yearFilter
+  );
+
+  return {
+    registros: yearRow?.registros ?? 0,
+    participantes: yearRow?.participantes ?? 0,
+  };
 }
 
-function getStateNetworkScores(scoreOffset: number): NetworkScore[] {
-  return networkScores.map((row) => ({
+function toNetworkScore(row: ScopeNetworkScore): NetworkScore {
+  return {
     area: row.area,
-    publica: roundScore(row.publica + scoreOffset * 0.9),
-    privada: roundScore(row.privada + scoreOffset * 1.05),
-  }));
-}
-
-function getAverageTerritoryOffset(states: StateParticipation[], maxRecords: number) {
-  const total = states.reduce((sum, state) => sum + state.registros, 0);
-  if (total === 0) return 0;
-
-  return states.reduce((sum, state) => sum + getStateScoreOffset(state, maxRecords) * state.registros, 0) / total;
-}
-
-function getStateCorrelationValue(value: number, scoreOffset: number) {
-  if (value === 1) return 1;
-  return roundScore(clamp(value + scoreOffset / 1200, 0.5, 0.99));
+    publica: row.publica,
+    privada: row.privada,
+  };
 }
 
 function getHeatColor(value: number) {
@@ -377,7 +314,6 @@ export default function App() {
   const [yearFilter, setYearFilter] = useState<YearFilter>('Todos');
   const [selectedUf, setSelectedUf] = useState<string | null>(defaultUf);
 
-  const maxStateRecords = Math.max(...stateParticipation.map((state) => state.registros));
   const regionBaseStates = useMemo(
     () =>
       selectedRegion === 'Todas'
@@ -404,23 +340,14 @@ export default function App() {
   const selectedBaseState = selectedUf ? stateParticipation.find((state) => state.uf === selectedUf) ?? null : null;
   const selectedState = selectedUf ? networkFilteredStateParticipation.find((state) => state.uf === selectedUf) ?? null : null;
   const selectedStateShare = selectedState && filteredTotalRecords > 0 ? (selectedState.registros / filteredTotalRecords) * 100 : 100;
-  const periodScoreOffset = getPeriodScoreOffset(yearFilter);
-  const regionScoreOffsetValue =
-    selectedRegion === 'Todas' ? 0 : getAverageTerritoryOffset(regionBaseStates, maxStateRecords);
-  const geographicScoreOffset = selectedBaseState
-    ? getStateScoreOffset(selectedBaseState, maxStateRecords)
-    : regionScoreOffsetValue;
-  const comparisonScoreOffset = geographicScoreOffset + periodScoreOffset;
-  const correlationScoreOffset = comparisonScoreOffset + getNetworkCorrelationOffset(selectedNetwork);
+  const activeScope = useMemo(
+    () => getScopeSelection(selectedRegion, selectedBaseState),
+    [selectedBaseState, selectedRegion]
+  );
 
   const filteredNetworkCounts = useMemo(
-    () =>
-      selectedBaseState
-        ? getStateNetworkCounts(selectedBaseState)
-        : selectedRegion === 'Todas'
-          ? networkCounts
-          : getAggregateNetworkCounts(regionBaseStates),
-    [regionBaseStates, selectedBaseState, selectedRegion]
+    () => getNetworkCountsForScope(activeScope),
+    [activeScope]
   );
   const visibleNetworkCounts = useMemo(
     () =>
@@ -430,13 +357,8 @@ export default function App() {
     [filteredNetworkCounts, selectedNetwork]
   );
   const filteredAdminCounts = useMemo(
-    () =>
-      selectedBaseState
-        ? getStateAdminCounts(filteredNetworkCounts)
-        : selectedRegion === 'Todas'
-          ? adminCounts
-          : getAggregateAdminCounts(regionBaseStates),
-    [filteredNetworkCounts, regionBaseStates, selectedBaseState, selectedRegion]
+    () => getAdminCountsForScope(activeScope),
+    [activeScope]
   );
   const visibleAdminCounts = useMemo(
     () =>
@@ -446,57 +368,23 @@ export default function App() {
     [filteredAdminCounts, selectedNetwork]
   );
   const filteredYearScores = useMemo(
-    () => getStateYearScores(geographicScoreOffset, selectedNetwork),
-    [geographicScoreOffset, selectedNetwork]
+    () => getYearScoresForScope(activeScope, selectedNetwork),
+    [activeScope, selectedNetwork]
   );
   const lineChartData = useMemo(
     () => filteredYearScores.map((row) => ({ ...row, media: roundScore(getAverageScore(row)) })),
     [filteredYearScores]
   );
-  const filteredNetworkScores = useMemo<NetworkScore[]>(() => {
-    if (selectedBaseState) return getStateNetworkScores(comparisonScoreOffset);
-
-    const baseScores =
-      selectedRegion === 'Todas'
-        ? networkScores
-        : regionalNetworkScores
-            .filter((row) => row.regiao === selectedRegion)
-            .map(({ area, publica, privada }) => ({ area, publica, privada }));
-
-    return baseScores.map((row) => ({
-      area: row.area,
-      publica: roundScore(row.publica + periodScoreOffset * 0.9),
-      privada: roundScore(row.privada + periodScoreOffset * 1.05),
-    }));
-  }, [comparisonScoreOffset, periodScoreOffset, selectedBaseState, selectedRegion]);
+  const filteredNetworkScores = useMemo<NetworkScore[]>(
+    () => getNetworkScoresForScope(activeScope, yearFilter),
+    [activeScope, yearFilter]
+  );
   const visibleNetworkScores = useMemo(
     () => filteredNetworkScores,
     [filteredNetworkScores]
   );
-  const filteredCorrelationRows = useMemo(
-    () => correlationRows.map((row) => ({ ...row, value: getStateCorrelationValue(row.value, correlationScoreOffset) })),
-    [correlationScoreOffset]
-  );
-  const visibleCorrelationRows = useMemo(
-    () => filteredCorrelationRows,
-    [filteredCorrelationRows]
-  );
-  const filteredCorrelationMatrix = useMemo(
-    () =>
-      correlationMatrix.map((row) => ({
-        area: row.area,
-        cn: getStateCorrelationValue(row.cn, correlationScoreOffset),
-        ch: getStateCorrelationValue(row.ch, correlationScoreOffset),
-        lp: getStateCorrelationValue(row.lp, correlationScoreOffset),
-        mt: getStateCorrelationValue(row.mt, correlationScoreOffset),
-        redacao: getStateCorrelationValue(row.redacao, correlationScoreOffset),
-      })),
-    [correlationScoreOffset]
-  );
-  const visibleCorrelationMatrix = useMemo(
-    () => filteredCorrelationMatrix,
-    [filteredCorrelationMatrix]
-  );
+  const visibleCorrelationRows = correlationRows;
+  const visibleCorrelationMatrix = correlationMatrix;
 
   const latestYear = filteredYearScores[filteredYearScores.length - 1];
   const firstYear = filteredYearScores[0];
@@ -513,6 +401,7 @@ export default function App() {
       : (selectedSubject ? latestYear[selectedSubject] : getAverageScore(latestYear)) -
         (selectedSubject ? firstYear[selectedSubject] : getAverageScore(firstYear));
   const selectedNetworkCount = filteredNetworkCounts.find((item) => item.rede === selectedNetwork);
+  const consideredTotals = getConsideredTotals(activeScope, selectedNetwork, yearFilter, filteredNetworkCounts);
   const locationLabel = selectedState?.nome ?? (selectedRegion === 'Todas' ? 'Brasil' : formatRegion(selectedRegion));
   const territoryLabel = selectedUf ?? (selectedRegion === 'Todas' ? 'Brasil' : formatRegion(selectedRegion));
   const periodLabel = yearFilter === 'Todos' ? `${periodStart}-${periodEnd}` : yearFilter.toString();
@@ -646,12 +535,12 @@ export default function App() {
           <div className="grid min-w-0 gap-5">
             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
               <MetricCard
-                label="Registros analisados"
-                value={formatNumber(selectedNetworkCount?.registros ?? selectedState?.registros ?? filteredTotalRecords)}
+                label="Participantes considerados"
+                value={formatNumber(consideredTotals.participantes)}
                 helper={
                   selectedNetwork === 'Todas'
-                    ? `Total filtrado para ${locationLabel}.`
-                    : `Filtro ativo: rede ${selectedNetwork.toLowerCase()}.`
+                    ? `${formatNumber(consideredTotals.registros)} registros escola-ano no recorte de ${locationLabel}.`
+                    : `${formatNumber(consideredTotals.registros)} registros escola-ano na rede ${selectedNetwork.toLowerCase()}.`
                 }
                 icon={<School className="h-5 w-5" />}
               />
@@ -1186,7 +1075,7 @@ export default function App() {
             </section>
 
             <section className="grid gap-4 lg:grid-cols-2">
-              <ChartPanel eyebrow="Associação" title={`Correlações entre notas em ${territoryLabel}`}>
+              <ChartPanel eyebrow="Associação" title="Correlações nacionais entre notas">
                 <div className="h-80">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={visibleCorrelationRows} margin={{ top: 4, right: 14, left: -14, bottom: 42 }}>

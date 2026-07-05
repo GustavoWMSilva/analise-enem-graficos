@@ -163,7 +163,7 @@ export function EnemMap({ points, states, selectedRegion, selectedUf, onSelectUf
           setHoveredState(null);
         }}
       >
-        <NavigationControl position="top-right" showCompass={false} />
+        <NavigationControl position="top-left" showCompass={false} />
 
         {stateSource && (
           <Source id="enem-state-boundaries" type="geojson" data={stateSource}>
