@@ -7,7 +7,7 @@ import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_CSV = ROOT.parent / "projeto_extensionista" / "microdados_enem_por_escola" / "DADOS" / "MICRODADOS_ENEM_ESCOLA.csv"
+SOURCE_CSV = ROOT / "src"/ "data" /  "microdados_enem_por_escola" / "DADOS" / "MICRODADOS_ENEM_ESCOLA.csv"
 OUTPUT_TS = ROOT / "src" / "data" / "enemData.ts"
 
 YEAR_START = 2009
